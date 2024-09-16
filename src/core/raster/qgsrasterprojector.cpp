@@ -487,7 +487,8 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
     {
       for (int j = 0; j < width; ++j)
       {
-        int srcRow, srcCol;
+        int srcRow = 0;
+        int srcCol = 0;
         insidePixels[i * width + j] = preciseSrcRowCol(i, j, &srcRow, &srcCol);
         srcRows[i * width + j] = srcRow;
         srcCols[i * width + j] = srcCol;
@@ -498,14 +499,12 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
   {
     // Approximate
     // Pull out constants from mDestExtent and precompute divisions
-    const double destExtentXMin = mDestExtent.xMinimum();
     const double destExtentYMax = mDestExtent.yMaximum();
     const double destExtentWidth = mDestExtent.width();
     const double destExtentHeight = mDestExtent.height();
     const double invCPRowsM1 = 1.0 / (mCPRows - 1);
     const double invCPColsM1 = 1.0 / (mCPCols - 1);
     const double destExtentHeightPerMatrixRow = destExtentHeight * invCPRowsM1;
-    const double destExtentWidthPerMatrixCol = destExtentWidth * invCPColsM1;
 
     for (int destRow = 0; destRow < height; ++destRow)
     {
@@ -519,10 +518,6 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
 
       for (int destCol = 0; destCol < width; ++destCol)
       {
-        const int myMatrixCol = matrixCol(destCol);
-
-        double myDestXMin = destExtentXMin + myMatrixCol * destExtentWidthPerMatrixCol;
-        double myDestXMax = destExtentXMin + (myMatrixCol + 1) * destExtentWidthPerMatrixCol;
 
         const QgsPointXY &myTop = pHelperTop[destCol];
         const QgsPointXY &myBot = pHelperBottom[destCol];
@@ -978,16 +973,11 @@ QgsRasterBlock *QgsRasterProjector::block( int bandNo, QgsRectangle  const &exte
       const qgssize destIndex = static_cast< qgssize >( i ) * width + j;
       const char *srcBits = input->constBits( srcIndex );
       char *destBits = output->bits( destIndex );
-      if ( !srcBits )
+      if ( !srcBits || !destBits )
       {
-        // QgsDebugError( QStringLiteral( "Cannot get input block data: row = %1 col = %2" ).arg( i ).arg( j ) );
         continue;
       }
-      if ( !destBits )
-      {
-        // QgsDebugError( QStringLiteral( "Cannot set output block data: srcRow = %1 srcCol = %2" ).arg( srcRow ).arg( srcCol ) );
-        continue;
-      }
+
       memcpy( destBits, srcBits, pixelSize );
       output->setIsData( i, j );
     }
