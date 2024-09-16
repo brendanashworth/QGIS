@@ -500,10 +500,10 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
     // Approximate
     // Pull out constants from mDestExtent and precompute divisions
     const double destExtentYMax = mDestExtent.yMaximum();
-    const double destExtentWidth = mDestExtent.width();
+    // const double destExtentWidth = mDestExtent.width();
     const double destExtentHeight = mDestExtent.height();
     const double invCPRowsM1 = 1.0 / (mCPRows - 1);
-    const double invCPColsM1 = 1.0 / (mCPCols - 1);
+    // const double invCPColsM1 = 1.0 / (mCPCols - 1);
     const double destExtentHeightPerMatrixRow = destExtentHeight * invCPRowsM1;
 
     for (int destRow = 0; destRow < height; ++destRow)
@@ -515,6 +515,10 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
       double myDestYMax = destExtentYMax - myMatrixRow * destExtentHeightPerMatrixRow;
 
       const double yfrac = (myDestY - myDestYMin) / (myDestYMax - myDestYMin);
+
+      const int baseIdx = destRow * width;
+      const double srcExtentYMax = mSrcExtent.yMaximum();
+      const double srcExtentXMin = mSrcExtent.xMinimum();
 
       for (int destCol = 0; destCol < width; ++destCol)
       {
@@ -529,17 +533,16 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
         const double mySrcX = bx + (tx - bx) * yfrac;
         const double mySrcY = by + (ty - by) * yfrac;
 
-        bool extentContains = mExtent.contains(mySrcX, mySrcY);
-
-        int srcRow = static_cast<int>(0.5 + (mSrcExtent.yMaximum() - mySrcY) / mSrcYRes);
-        int srcCol = static_cast<int>(0.5 + (mySrcX - mSrcExtent.xMinimum()) / mSrcXRes);
+        int srcRow = static_cast<int>(0.5 + (srcExtentYMax - mySrcY) / mSrcYRes);
+        int srcCol = static_cast<int>(0.5 + (mySrcX - srcExtentXMin) / mSrcXRes);
 
         // Make sure this is true, too
-        insidePixels[destRow * width + destCol] = extentContains && (
+        const int idx = baseIdx + destCol;
+        insidePixels[idx] = (
           srcRow < mSrcRows && srcRow >= 0 && srcCol < mSrcCols && srcCol >= 0
-        );
-        srcRows[destRow * width + destCol] = srcRow;
-        srcCols[destRow * width + destCol] = srcCol;
+        ) && mExtent.contains(mySrcX, mySrcY); // Good chance we can avoid function call
+        srcRows[idx] = srcRow;
+        srcCols[idx] = srcCol;
       }
     }
   }
