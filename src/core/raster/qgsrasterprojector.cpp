@@ -104,7 +104,6 @@ ProjectorData::ProjectorData( const QgsRectangle &extent, int width, int height,
   , mSrcYRes( 0.0 )
   , mDestRowsPerMatrixRow( 0.0 )
   , mDestColsPerMatrixCol( 0.0 )
-  , mHelperTopRow( 0 )
   , mCPCols( 0 )
   , mCPRows( 0 )
   , mSqrTolerance( 0.0 )
@@ -233,7 +232,6 @@ ProjectorData::ProjectorData( const QgsRectangle &extent, int width, int height,
   pHelperBottom = new QgsPointXY[mDestCols];
   calcHelper( 0, pHelperTop );
   calcHelper( 1, pHelperBottom );
-  mHelperTopRow = 0;
 
   // Calculate source dimensions
   calcSrcExtent();
@@ -475,17 +473,6 @@ void ProjectorData::calcHelper( int matrixRow, QgsPointXY *points )
   }
 }
 
-void ProjectorData::nextHelper()
-{
-  // We just switch pHelperTop and pHelperBottom, memory is not lost
-  QgsPointXY *tmp = nullptr;
-  tmp = pHelperTop;
-  pHelperTop = pHelperBottom;
-  pHelperBottom = tmp;
-  calcHelper( mHelperTopRow + 2, pHelperBottom );
-  mHelperTopRow++;
-}
-
 bool ProjectorData::srcRowCol( int destRow, int destCol, int *srcRow, int *srcCol )
 {
   if ( mApproximate )
@@ -558,12 +545,6 @@ bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow,
 {
   const int myMatrixRow = matrixRow( destRow );
   const int myMatrixCol = matrixCol( destCol );
-
-  if ( myMatrixRow > mHelperTopRow )
-  {
-    // TODO: make it more robust (for random, not sequential reading)
-    nextHelper();
-  }
 
   const double myDestY = mDestExtent.yMaximum() - ( destRow + 0.5 ) * mDestYRes;
 

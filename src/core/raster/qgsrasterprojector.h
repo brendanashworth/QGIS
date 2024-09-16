@@ -212,9 +212,6 @@ class ProjectorData
     //! Calculate array of src helper points
     void calcHelper( int matrixRow, QgsPointXY *points );
 
-    //! Calc / switch helper
-    void nextHelper();
-
     //! Gets mCPMatrix as string
     QString cpToString() const;
 
@@ -280,9 +277,6 @@ class ProjectorData
     //! Array of source points for each destination column on bottom of current CPMatrix grid row
     /* Warning: using QList is slow on access */
     QgsPointXY *pHelperBottom = nullptr;
-
-    //! Current mHelperTop matrix row
-    int mHelperTopRow;
 
     //! Number of mCPMatrix columns
     int mCPCols;
