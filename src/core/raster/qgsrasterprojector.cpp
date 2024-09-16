@@ -497,13 +497,23 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
   else
   {
     // Approximate
+    // Pull out constants from mDestExtent and precompute divisions
+    const double destExtentXMin = mDestExtent.xMinimum();
+    const double destExtentYMax = mDestExtent.yMaximum();
+    const double destExtentWidth = mDestExtent.width();
+    const double destExtentHeight = mDestExtent.height();
+    const double invCPRowsM1 = 1.0 / (mCPRows - 1);
+    const double invCPColsM1 = 1.0 / (mCPCols - 1);
+    const double destExtentHeightPerMatrixRow = destExtentHeight * invCPRowsM1;
+    const double destExtentWidthPerMatrixCol = destExtentWidth * invCPColsM1;
+
     for (int destRow = 0; destRow < height; ++destRow)
     {
       const int myMatrixRow = matrixRow(destRow);
-      const double myDestY = mDestExtent.yMaximum() - (destRow + 0.5) * mDestYRes;
+      const double myDestY = destExtentYMax - (destRow + 0.5) * mDestYRes;
 
-      double myDestYMin = mDestExtent.yMaximum() - (myMatrixRow + 1) * mDestExtent.height() / ( mCPRows - 1 );
-      double myDestYMax = mDestExtent.yMaximum() - myMatrixRow * mDestExtent.height() / ( mCPRows - 1 );
+      double myDestYMin = destExtentYMax - (myMatrixRow + 1) * destExtentHeightPerMatrixRow;
+      double myDestYMax = destExtentYMax - myMatrixRow * destExtentHeightPerMatrixRow;
 
       const double yfrac = (myDestY - myDestYMin) / (myDestYMax - myDestYMin);
 
@@ -511,13 +521,8 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
       {
         const int myMatrixCol = matrixCol(destCol);
 
-        // double myDestXMin, myDestYMin, myDestXMax, myDestYMax;
-        // destPointOnCPMatrix(myMatrixRow + 1, myMatrixCol, &myDestXMin, &myDestYMin);
-        // destPointOnCPMatrix(myMatrixRow, myMatrixCol + 1, &myDestXMax, &myDestYMax);
-
-        // destPointOnCPMatrix( int row, int col, double *theX, double *theY )
-        double myDestXMin = mDestExtent.xMinimum() + myMatrixCol * mDestExtent.width() / ( mCPCols - 1 );
-        double myDestXMax = mDestExtent.xMinimum() + (myMatrixCol + 1) * mDestExtent.width() / ( mCPCols - 1 );
+        double myDestXMin = destExtentXMin + myMatrixCol * destExtentWidthPerMatrixCol;
+        double myDestXMax = destExtentXMin + (myMatrixCol + 1) * destExtentWidthPerMatrixCol;
 
         const QgsPointXY &myTop = pHelperTop[destCol];
         const QgsPointXY &myBot = pHelperBottom[destCol];
@@ -530,14 +535,6 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
         const double mySrcY = by + (ty - by) * yfrac;
 
         bool extentContains = mExtent.contains(mySrcX, mySrcY);
-        // insidePixels[destRow * width + destCol] = extentContains;
-        // if (!mExtent.contains(mySrcX, mySrcY))
-        // {
-        //   insidePixels[destRow * width + destCol] = false;
-        //   srcRows[destRow * width + destCol] = -1;
-        //   srcCols[destRow * width + destCol] = -1;
-        //   continue;
-        // }
 
         int srcRow = static_cast<int>(std::floor((mSrcExtent.yMaximum() - mySrcY) / mSrcYRes));
         int srcCol = static_cast<int>(std::floor((mySrcX - mSrcExtent.xMinimum()) / mSrcXRes));
