@@ -531,11 +531,13 @@ std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData:
 
         bool extentContains = mExtent.contains(mySrcX, mySrcY);
 
-        int srcRow = static_cast<int>(std::floor((mSrcExtent.yMaximum() - mySrcY) / mSrcYRes));
-        int srcCol = static_cast<int>(std::floor((mySrcX - mSrcExtent.xMinimum()) / mSrcXRes));
+        int srcRow = static_cast<int>(0.5 + (mSrcExtent.yMaximum() - mySrcY) / mSrcYRes);
+        int srcCol = static_cast<int>(0.5 + (mySrcX - mSrcExtent.xMinimum()) / mSrcXRes);
 
         // Make sure this is true, too
-        insidePixels[destRow * width + destCol] = extentContains && (srcRow < mSrcRows && srcRow >= 0 && srcCol < mSrcCols && srcCol >= 0);
+        insidePixels[destRow * width + destCol] = extentContains && (
+          srcRow < mSrcRows && srcRow >= 0 && srcCol < mSrcCols && srcCol >= 0
+        );
         srcRows[destRow * width + destCol] = srcRow;
         srcCols[destRow * width + destCol] = srcCol;
       }
