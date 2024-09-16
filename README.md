@@ -8,6 +8,50 @@
 [![🪟 MingW64 Windows 64bit Build](https://github.com/qgis/QGIS/actions/workflows/mingw64.yml/badge.svg)](https://github.com/qgis/QGIS/actions/workflows/mingw64.yml?query=branch%3Amaster+event%3Apush)
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5869837.svg)](https://doi.org/10.5281/zenodo.5869837)
 
+docker build -f .docker/qgis.dockerfile -t qgis-compile .
+docker run -v $(pwd)/../qgis_ccache:/ccache -v $(pwd):/QGIS -it qgis-compile
+
+cmake \
+  -GNinja \
+  -DUSE_CCACHE=ON \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_INSTALL_PREFIX=/usr \
+  -DWITH_DESKTOP=ON \
+  -DWITH_SERVER=OFF \
+  -DWITH_3D=OFF \
+  -DWITH_BINDINGS=ON \
+  -DWITH_CUSTOM_WIDGETS=ON \
+  -DBINDINGS_GLOBAL_INSTALL=ON \
+  -DWITH_STAGED_PLUGINS=ON \
+  -DWITH_GRASS=OFF \
+  -DSUPPRESS_QT_WARNINGS=ON \
+  -DDISABLE_DEPRECATED=ON \
+  -DENABLE_TESTS=ON \
+  -DWITH_QSPATIALITE=ON \
+  -DWITH_APIDOC=OFF \
+  -DWITH_ASTYLE=OFF \
+  -DCMAKE_CXX_FLAGS_DEBUG="-g -O2" \
+  -DCMAKE_C_FLAGS_DEBUG="-g -O2" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" \
+  -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold" \
+  -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=mold" \
+  /QGIS
+ninja -j6 install
+
+#docker run -v $(pwd)/../qgis_ccache:/QGIS/.ccache_image_build -it qgis-build /bin/bash
+
+apt-get install linux-tools-common linux-tools-generic -y
+apt-get install valgrind -y
+
+export QT_QPA_PLATFORM=offscreen
+output/bin/test_core_rasterblock
+
+valgrind output/bin/test_core_rasterblock
+callgrind_annotate --inclusive=yes callgrind.out.45206 | grep -E 'PROGRAM TOTAL|[0-9]{2,}%' | grep -v '0\.00%'
+
+/usr/lib/linux-tools/5.15.0-121-generic/perf
+
+
 QGIS is a full-featured, user-friendly, free-and-open-source (FOSS) geographical information system (GIS) that runs on Unix platforms, Windows, and MacOS.
 
 <!-- TOC generated with https://freelance-tech-writer.github.io/table-of-contents-generator/index.html -->
