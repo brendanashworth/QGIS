@@ -22,6 +22,12 @@
 #include "qgsrasterlayer.h"
 #include "qgsrasterdataprovider.h"
 
+#include "qgsrasterprojector.h"
+#include "qgscoordinatetransform.h"
+#include "qgscoordinatereferencesystem.h"
+#include "qgsproject.h"
+#include <QElapsedTimer>
+
 /**
  * \ingroup UnitTests
  * This is a unit test for the QgsRasterBlock class.
@@ -39,6 +45,7 @@ class TestQgsRasterBlock : public QObject
     void cleanup() {} // will be called after every testfunction.
 
     void testBasic();
+    void testProjected();
     void testWrite();
     void testPrintValueFloat_data();
     void testPrintValueFloat();
@@ -49,6 +56,7 @@ class TestQgsRasterBlock : public QObject
 
     QString mTestDataDir;
     QgsRasterLayer *mpRasterLayer = nullptr;
+    QgsRasterLayer *demRasterLayer = nullptr;
 };
 
 
@@ -65,6 +73,9 @@ void TestQgsRasterBlock::initTestCase()
   mpRasterLayer = new QgsRasterLayer( band1byteRaster, QStringLiteral( "band1_byte" ) );
 
   QVERIFY( mpRasterLayer && mpRasterLayer->isValid() );
+
+  demRasterLayer = new QgsRasterLayer( mTestDataDir + "/raster/dem.tif", "dem", "gdal" );
+  QVERIFY( demRasterLayer && demRasterLayer->isValid() );
 }
 
 //runs after all tests
@@ -156,6 +167,185 @@ void TestQgsRasterBlock::testBasic()
   QCOMPARE( data2.at( 10 ), ( char ) 27 );
 
   delete block;
+}
+
+double averageValue(const QgsRasterBlock* block)
+{
+  if (!block || block->isEmpty() || block->dataType() != Qgis::DataType::Float32)
+    return 0.0;
+
+  double sum = 0.0;
+  int width = block->width();
+  int height = block->height();
+  int count = 0;
+  bool isNoData = false;
+
+  for (int y = 0; y < height; ++y)
+  {
+    for (int x = 0; x < width; ++x)
+    {
+      double value = block->valueAndNoData(y * width + x, isNoData);
+      if (!isNoData)
+      {
+        sum += value;
+        ++count;
+      }
+    }
+  }
+
+  return count > 0 ? sum / count : 0.0;
+}
+
+uint64_t improvedHash(const QgsRasterBlock* block)
+{
+  if (!block || block->isEmpty() || block->dataType() != Qgis::DataType::Float32)
+    return 0;
+
+  uint64_t hash = 0;
+  int width = block->width();
+  int height = block->height();
+  bool isNoData = false;
+
+  for (int y = 0; y < height; ++y)
+  {
+    for (int x = 0; x < width; ++x)
+    {
+      double value = block->valueAndNoData(y * width + x, isNoData);
+      if (isNoData)
+        continue;
+
+      uint64_t pixelHash = static_cast<uint64_t>(value * 1000);
+      pixelHash ^= static_cast<uint64_t>(x) << 16;
+      pixelHash ^= static_cast<uint64_t>(y) << 24;
+
+      hash = ((hash << 5) + hash) + pixelHash;
+    }
+  }
+
+  return hash;
+}
+
+
+void TestQgsRasterBlock::testProjected()
+{
+  // DEM raster layer is in 4326
+  QgsRasterDataProvider *provider = demRasterLayer->dataProvider();
+  QVERIFY( provider );
+
+  const QgsRectangle extent_4326 = demRasterLayer->extent();
+  const int width = demRasterLayer->width();
+  const int height = demRasterLayer->height();
+  qDebug() << "Width:" << width << "Height:" << height;
+
+  // Create a projector to reproject to EPSG:3857
+  QgsCoordinateReferenceSystem destCrs( QStringLiteral( "EPSG:3857" ) );
+  QgsRasterProjector projector;
+  projector.setInput( provider );
+  projector.setCrs( provider->crs(), destCrs, QgsProject::instance()->transformContext() );
+
+  // Project extent_4326 to 3857
+  QgsCoordinateTransform transform( provider->crs(), destCrs, QgsProject::instance()->transformContext() );
+  QgsRectangle extent_3857 = transform.transformBoundingBox( extent_4326 );
+
+  qDebug() << "Original extent:" << extent_4326.toString();
+  qDebug() << "Projected extent:" << extent_3857.toString();
+
+  // Create extent_3857_lg which is extent_3857 except 50% larger in each direction
+  QgsRectangle extent_3857_lg = extent_3857;
+  double widthIncrease = extent_3857.width() * 0.5;
+  double heightIncrease = extent_3857.height() * 0.5;
+  extent_3857_lg.setXMinimum(extent_3857_lg.xMinimum() - widthIncrease / 2);
+  extent_3857_lg.setXMaximum(extent_3857_lg.xMaximum() + widthIncrease / 2);
+  extent_3857_lg.setYMinimum(extent_3857_lg.yMinimum() - heightIncrease / 2);
+  extent_3857_lg.setYMaximum(extent_3857_lg.yMaximum() + heightIncrease / 2);
+
+  qDebug() << "Larger extent:" << extent_3857_lg.toString();
+
+  QgsRasterBlock *block1 = provider->block( 1, extent_4326, width, height );
+  qDebug() << "Block 1 average value:" << averageValue(block1);
+  qDebug() << "Block 1 hash:" << improvedHash(block1);
+  QVERIFY((averageValue(block1) - 147.172) < 0.01);
+  QCOMPARE(improvedHash(block1), 14202694558507027827ULL);
+
+  QgsRasterBlock *block2 = projector.block( 1, extent_3857, width, height );
+  qDebug() << "Block 2 average value:" << averageValue(block2);
+  qDebug() << "Block 2 hash:" << improvedHash(block2);
+  QVERIFY((averageValue(block2) - 147.159) < 0.01);
+  QCOMPARE(improvedHash(block2), 9471715072450137233ULL);
+
+  QgsRasterBlock *block3 = projector.block( 1, extent_3857_lg, width, height );
+  qDebug() << "Block 3 average value:" << averageValue(block3);
+  qDebug() << "Block 3 hash:" << improvedHash(block3);
+  QVERIFY((averageValue(block3) - 147.183) < 0.01);
+  QCOMPARE(improvedHash(block3), 13912239206301413414ULL);
+
+  // Measure time to run block() with original extent
+  QElapsedTimer timer;
+  timer.start();
+
+  // empty means that there's no data allocated, which is weird!
+
+  const int N_RUNS = 50;
+  for (int z_ = 0; z_ < N_RUNS; z_++) {
+    // Time to run 10k block() with original extent: 10641 ms
+    // so provider->block() is 1.06ms per call
+    QgsRasterBlock *block = provider->block( 1, extent_4326, width, height );
+
+    QVERIFY( block->isValid() );
+    QVERIFY( !block->isEmpty() );
+
+    delete block;
+  }
+
+  qDebug() << "Time to run" << N_RUNS << "block() with original extent:" << timer.elapsed() << "ms";
+  QgsDebugError( QStringLiteral( "Time to run %1 block() with original extent: %2 ms" ).arg( N_RUNS ).arg( timer.elapsed() ) );
+
+  // Measure time to run block() with projected extent
+  timer.restart();
+
+  // QgsRasterProjector::block is 75% of the compute here
+  // and 51% is ProjectorData::srcRowCol, with 49% being ProjectorData::approximateSrcRowCol
+  // 19% destPointOnCPMatrix
+
+  for (int z_ = 0; z_ < N_RUNS; z_++) {
+    // Time to run N_RUNS block() with projected extent: 7785 ms for 500 runs
+    QgsRasterBlock *block = projector.block( 1, extent_3857, width, height );
+
+    QVERIFY( block->isValid() );
+    QVERIFY( !block->isEmpty() ); // HELP this is where it fails
+
+    delete block;
+  }
+
+  qDebug() << "Time to run" << N_RUNS << "block() with projected extent:" << timer.elapsed() << "ms";
+  QgsDebugError( QStringLiteral( "Time to run %1 block() with projected extent: %2 ms" ).arg( N_RUNS ).arg( timer.elapsed() ) );
+
+  timer.restart();
+
+  for (int z_ = 0; z_ < N_RUNS; z_++) {
+    // Time to run N_RUNS block() with larger extent: 6134 ms for 500 runs
+    QgsRasterBlock *block = projector.block( 1, extent_3857_lg, width, height );
+
+    QVERIFY( block->isValid() );
+    QVERIFY( !block->isEmpty() );
+
+    delete block;
+  }
+
+  qDebug() << "Time to run" << N_RUNS << "block() with larger extent:" << timer.elapsed() << "ms";
+  QgsDebugError( QStringLiteral( "Time to run %1 block() with larger extent: %2 ms" ).arg( N_RUNS ).arg( timer.elapsed() ) );
+
+
+
+// QDEBUG : TestQgsRasterBlock::testProjected() Time to run N_RUNS block() with original extent: 22 ms
+// tests/src/core/testqgsrasterblock.cpp:227 : (testProjected) [37ms] Time to run N_RUNS block() with original extent: 22 ms
+// QDEBUG : TestQgsRasterBlock::testProjected() Time to run N_RUNS block() with projected extent: 554 ms
+// tests/src/core/testqgsrasterblock.cpp:242 : (testProjected) [554ms] Time to run N_RUNS block() with projected extent: 554 ms
+// QDEBUG : TestQgsRasterBlock::testProjected() Time to run N_RUNS block() with larger extent: 462 ms
+// tests/src/core/testqgsrasterblock.cpp:256 : (testProjected) [462ms] Time to run N_RUNS block() with larger extent: 462 ms
+
+  // Don't verify contents, just clean up
+  // delete block;
 }
 
 void TestQgsRasterBlock::testWrite()
