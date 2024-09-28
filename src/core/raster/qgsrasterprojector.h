@@ -155,6 +155,17 @@ class ProjectorData
      */
     bool srcRowCol( int destRow, int destCol, int *srcRow, int *srcCol );
 
+    /**
+     * Calculates which pixels in the destination raster are inside the source extent.
+     * \param width Width of the destination raster
+     * \param height Height of the destination raster
+     * \returns Tuple containing:
+     *          - Vector of booleans indicating whether each pixel is inside (true) or outside (false)
+     *          - Vector of source row indices for each destination pixel
+     *          - Vector of source column indices for each destination pixel
+     */
+    std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> calculateInsidePixels(int width, int height);
+
     QgsRectangle srcExtent() const { return mSrcExtent; }
     int srcRows() const { return mSrcRows; }
     int srcCols() const { return mSrcCols; }

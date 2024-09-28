@@ -21,6 +21,7 @@
 #include "qgsrasterprojector.h"
 #include "qgscoordinatetransform.h"
 #include "qgsexception.h"
+#include "qgsrectangle.h"
 
 Q_NOWARN_DEPRECATED_PUSH // because of deprecated members
 QgsRasterProjector::QgsRasterProjector()
@@ -473,6 +474,84 @@ void ProjectorData::calcHelper( int matrixRow, QgsPointXY *points )
   }
 }
 
+std::tuple<std::vector<bool>, std::vector<int>, std::vector<int>> ProjectorData::calculateInsidePixels(int width, int height)
+{
+  std::vector<bool> insidePixels(width * height);
+  std::vector<int> srcRows(width * height);
+  std::vector<int> srcCols(width * height);
+
+  if (!mApproximate)
+  {
+    // Precise, so we call into the function
+    for (int i = 0; i < height; ++i)
+    {
+      for (int j = 0; j < width; ++j)
+      {
+        int srcRow, srcCol;
+        insidePixels[i * width + j] = preciseSrcRowCol(i, j, &srcRow, &srcCol);
+        srcRows[i * width + j] = srcRow;
+        srcCols[i * width + j] = srcCol;
+      }
+    }
+  }
+  else
+  {
+    // Approximate
+    for (int destRow = 0; destRow < height; ++destRow)
+    {
+      const int myMatrixRow = matrixRow(destRow);
+      const double myDestY = mDestExtent.yMaximum() - (destRow + 0.5) * mDestYRes;
+
+      double myDestYMin = mDestExtent.yMaximum() - (myMatrixRow + 1) * mDestExtent.height() / ( mCPRows - 1 );
+      double myDestYMax = mDestExtent.yMaximum() - myMatrixRow * mDestExtent.height() / ( mCPRows - 1 );
+
+      const double yfrac = (myDestY - myDestYMin) / (myDestYMax - myDestYMin);
+
+      for (int destCol = 0; destCol < width; ++destCol)
+      {
+        const int myMatrixCol = matrixCol(destCol);
+
+        // double myDestXMin, myDestYMin, myDestXMax, myDestYMax;
+        // destPointOnCPMatrix(myMatrixRow + 1, myMatrixCol, &myDestXMin, &myDestYMin);
+        // destPointOnCPMatrix(myMatrixRow, myMatrixCol + 1, &myDestXMax, &myDestYMax);
+
+        // destPointOnCPMatrix( int row, int col, double *theX, double *theY )
+        double myDestXMin = mDestExtent.xMinimum() + myMatrixCol * mDestExtent.width() / ( mCPCols - 1 );
+        double myDestXMax = mDestExtent.xMinimum() + (myMatrixCol + 1) * mDestExtent.width() / ( mCPCols - 1 );
+
+        const QgsPointXY &myTop = pHelperTop[destCol];
+        const QgsPointXY &myBot = pHelperBottom[destCol];
+
+        const double tx = myTop.x();
+        const double ty = myTop.y();
+        const double bx = myBot.x();
+        const double by = myBot.y();
+        const double mySrcX = bx + (tx - bx) * yfrac;
+        const double mySrcY = by + (ty - by) * yfrac;
+
+        bool extentContains = mExtent.contains(mySrcX, mySrcY);
+        // insidePixels[destRow * width + destCol] = extentContains;
+        // if (!mExtent.contains(mySrcX, mySrcY))
+        // {
+        //   insidePixels[destRow * width + destCol] = false;
+        //   srcRows[destRow * width + destCol] = -1;
+        //   srcCols[destRow * width + destCol] = -1;
+        //   continue;
+        // }
+
+        int srcRow = static_cast<int>(std::floor((mSrcExtent.yMaximum() - mySrcY) / mSrcYRes));
+        int srcCol = static_cast<int>(std::floor((mySrcX - mSrcExtent.xMinimum()) / mSrcXRes));
+
+        // Make sure this is true, too
+        insidePixels[destRow * width + destCol] = extentContains && (srcRow < mSrcRows && srcRow >= 0 && srcCol < mSrcCols && srcCol >= 0);
+        srcRows[destRow * width + destCol] = srcRow;
+        srcCols[destRow * width + destCol] = srcCol;
+      }
+    }
+  }
+  return std::make_tuple(insidePixels, srcRows, srcCols);
+}
+
 bool ProjectorData::srcRowCol( int destRow, int destCol, int *srcRow, int *srcCol )
 {
   if ( mApproximate )
@@ -543,6 +622,7 @@ bool ProjectorData::preciseSrcRowCol( int destRow, int destCol, int *srcRow, int
 
 bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow, int *srcCol )
 {
+  // matrixRow and matrixCol are 2% each
   const int myMatrixRow = matrixRow( destRow );
   const int myMatrixCol = matrixCol( destCol );
 
@@ -552,6 +632,7 @@ bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow,
   // TODO: use some kind of cache of values which can be reused
   double myDestXMin, myDestYMin, myDestXMax, myDestYMax;
 
+  // each destPointOnCPMatrix is 10%
   destPointOnCPMatrix( myMatrixRow + 1, myMatrixCol, &myDestXMin, &myDestYMin );
   destPointOnCPMatrix( myMatrixRow, myMatrixCol + 1, &myDestXMax, &myDestYMax );
 
@@ -571,7 +652,7 @@ bool ProjectorData::approximateSrcRowCol( int destRow, int destCol, int *srcRow,
   const double mySrcX = bx + ( tx - bx ) * yfrac;
   const double mySrcY = by + ( ty - by ) * yfrac;
 
-  if ( !mExtent.contains( mySrcX, mySrcY ) )
+  if ( !mSrcExtent.contains( mySrcX, mySrcY ) )
   {
     return false;
   }
@@ -863,24 +944,40 @@ QgsRasterBlock *QgsRasterProjector::block( int bandNo, QgsRectangle  const &exte
   // we cannot fill output block with no data because we use memcpy for data, not setValue().
   const bool doNoData = !QgsRasterBlock::typeIsNumeric( input->dataType() ) && input->hasNoData() && !input->hasNoDataValue();
 
-  int srcRow, srcCol;
+  auto [insidePixels, srcRows, srcCols] = pd.calculateInsidePixels(width, height);
+
   for ( int i = 0; i < height; ++i )
   {
+    // Rendering can be slow on computers so allow it to cancel halfway
     if ( feedback && feedback->isCanceled() )
       break;
     for ( int j = 0; j < width; ++j )
     {
-      const bool inside = pd.srcRowCol( i, j, &srcRow, &srcCol );
+      // Everything in here is in the hot path
+      // srcRowCol had one hit
+      // This just returns true/false if this point is inside mExtent of the raster
+      // when would this not be the same as the projected point being outside width/height?
+      // i guess we iterate over width/height so the raster has to end in the block
+
+      // 2/3 of the block() time is spent in srcRowCol
+      // const bool inside = pd.srcRowCol( i, j, &srcRow, &srcCol );
+      const bool inside = insidePixels[i * width + j];
       if ( !inside ) continue; // we have everything set to no data
+
+      const int srcRow = srcRows[i * width + j];
+      const int srcCol = srcCols[i * width + j];
 
       const qgssize srcIndex = static_cast< qgssize >( srcRow ) * pd.srcCols() + srcCol;
 
       // isNoData() may be slow so we check doNoData first
+      // indeed, isNoData is slow af
       if ( doNoData && input->isNoData( srcRow, srcCol ) )
       {
         continue;
       }
 
+      // Dereferencing this pointer can also be expensive in the loop
+      // one hit here in the ->
       const qgssize destIndex = static_cast< qgssize >( i ) * width + j;
       const char *srcBits = input->constBits( srcIndex );
       char *destBits = output->bits( destIndex );
